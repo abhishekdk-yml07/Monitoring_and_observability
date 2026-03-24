@@ -1,0 +1,121 @@
+global:
+  resolve_timeout: 5m
+  slack_api_url: '${SLACK_WEBHOOK_URL}'
+
+# ─────────────────────────────────────────────
+# Templates
+# ─────────────────────────────────────────────
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# ─────────────────────────────────────────────
+# Routing tree
+# ─────────────────────────────────────────────
+route:
+  group_by: ['alertname', 'cluster', 'namespace']
+  group_wait:      30s    # Wait to batch alerts
+  group_interval:  5m     # Wait before sending new group notification
+  repeat_interval: 4h     # Re-notify if still firing
+
+  receiver: 'slack-default'
+
+  routes:
+    # P1/Critical → PagerDuty immediately
+    - match:
+        severity: critical
+      receiver: pagerduty-critical
+      continue: true   # Also send to Slack
+
+    # P1/Critical → also notify Slack #alerts
+    - match:
+        severity: critical
+      receiver: slack-critical
+      group_wait: 10s
+
+    # P2/Warning → Slack #alerts only
+    - match:
+        severity: warning
+      receiver: slack-warning
+      group_wait: 1m
+
+    # Watchdog (always-firing "heartbeat" alert)
+    - match:
+        alertname: Watchdog
+      receiver: deadmanssnitch
+      group_wait: 0s
+      repeat_interval: 1m
+
+# ─────────────────────────────────────────────
+# Inhibition rules — reduce noise
+# ─────────────────────────────────────────────
+inhibit_rules:
+  # If ApplicationDown fires, suppress HighErrorRate/HighLatency for same instance
+  - source_match:
+      alertname: ApplicationDown
+      severity: critical
+    target_match_re:
+      alertname: 'HighErrorRate|HighLatencyP99'
+    equal: ['instance']
+
+  # If a node is NotReady, suppress pod-level alerts on that node
+  - source_match:
+      alertname: NodeNotReady
+      severity: critical
+    target_match_re:
+      alertname: 'PodCrashLooping|PodNotReady'
+    equal: ['node']
+
+  # Critical silences warning for same alert
+  - source_match:
+      severity: critical
+    target_match:
+      severity: warning
+    equal: ['alertname', 'namespace']
+
+# ─────────────────────────────────────────────
+# Receivers
+# ─────────────────────────────────────────────
+receivers:
+
+  - name: 'slack-default'
+    slack_configs:
+      - channel: '#monitoring-info'
+        send_resolved: true
+        title: '{{ template "slack.title" . }}'
+        text:  '{{ template "slack.text" . }}'
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+
+  - name: 'slack-critical'
+    slack_configs:
+      - channel: '#alerts'
+        send_resolved: true
+        title: '🚨 CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |
+          *Summary:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Description:* {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          {{ if .Alerts.Firing }}*Runbook:* {{ range .Alerts }}{{ .Annotations.runbook }}{{ end }}{{ end }}
+        color: danger
+
+  - name: 'slack-warning'
+    slack_configs:
+      - channel: '#alerts'
+        send_resolved: true
+        title: '⚠️ WARNING: {{ .GroupLabels.alertname }}'
+        text: |
+          *Summary:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Environment:* {{ .GroupLabels.cluster }}
+        color: warning
+
+  - name: 'pagerduty-critical'
+    pagerduty_configs:
+      - routing_key: '${PAGERDUTY_INTEGRATION_KEY}'
+        description: '{{ template "pagerduty.default.description" . }}'
+        severity: '{{ if eq .GroupLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+        details:
+          firing: '{{ .Alerts.Firing | len }}'
+          runbook: '{{ range .Alerts }}{{ .Annotations.runbook }}{{ end }}'
+
+  - name: 'deadmanssnitch'
+    webhook_configs:
+      - url: '${DEADMANSSNITCH_URL}'
+        send_resolved: false

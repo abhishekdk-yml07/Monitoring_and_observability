@@ -1,0 +1,68 @@
+groups:
+  - name: infrastructure
+    rules:
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High CPU on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value | humanize }}% for 10+ minutes"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value | humanize }}% (threshold: 85%)"
+
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} /
+           node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Only {{ $value | humanize }}% disk space remaining on {{ $labels.mountpoint }}"
+
+      - alert: DiskSpaceCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/",fstype!="tmpfs"} /
+           node_filesystem_size_bytes{mountpoint="/",fstype!="tmpfs"}) * 100 < 5
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "CRITICAL: Disk almost full on {{ $labels.instance }}"
+          description: "Only {{ $value | humanize }}% disk space remaining — immediate action required"
+
+      - alert: HighDiskIOWait
+        expr: irate(node_disk_io_time_seconds_total[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High disk I/O wait on {{ $labels.instance }}"
+          description: "Disk {{ $labels.device }} I/O wait is {{ $value | humanize }}%"
+
+      - alert: NetworkErrorsHigh
+        expr: rate(node_network_receive_errs_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High network errors on {{ $labels.instance }}"
+          description: "{{ $value | humanize }} receive errors/sec on {{ $labels.device }}"

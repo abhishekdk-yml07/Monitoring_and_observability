@@ -1,0 +1,94 @@
+groups:
+  - name: application
+    interval: 30s
+    rules:
+
+      # ─── High Error Rate ───────────────────────
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (job, instance)
+            /
+            sum(rate(http_requests_total[5m])) by (job, instance)
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "High HTTP 5xx error rate on {{ $labels.instance }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%) on {{ $labels.job }}/{{ $labels.instance }}"
+          runbook: "https://runbooks.mycompany.com/high-error-rate"
+          dashboard: "https://grafana.mycompany.com/d/app-overview"
+
+      # ─── High Latency ──────────────────────────
+      - alert: HighLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (job, le)
+          ) > 2.0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High p99 latency on {{ $labels.job }}"
+          description: "p99 latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+          runbook: "https://runbooks.mycompany.com/high-latency"
+
+      # ─── SLO Burn Rate (fast burn) ────────────
+      - alert: SLOBurnRateFast
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h])) by (job)
+            /
+            sum(rate(http_requests_total[1h])) by (job)
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "SLO burn rate too high — error budget will be exhausted in <1 hour"
+          description: "Current burn rate {{ $value | humanizePercentage }} exceeds 14.4x threshold"
+          runbook: "https://runbooks.mycompany.com/slo-burn-rate"
+
+      # ─── SLO Burn Rate (slow burn) ────────────
+      - alert: SLOBurnRateSlow
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[6h])) by (job)
+            /
+            sum(rate(http_requests_total[6h])) by (job)
+          ) > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SLO burn rate elevated — error budget exhaustion in <1 day"
+          description: "6-hour burn rate {{ $value | humanizePercentage }} exceeds 6x threshold"
+
+      # ─── App Down ─────────────────────────────
+      - alert: ApplicationDown
+        expr: up{job="myapp"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Application {{ $labels.instance }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} — app may be crashed or unreachable"
+          runbook: "https://runbooks.mycompany.com/application-down"
+
+      # ─── High Request Rate (traffic spike) ────
+      - alert: HighRequestRate
+        expr: |
+          sum(rate(http_requests_total[5m])) by (job) > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Unusually high request rate — possible traffic spike or DDoS"
+          description: "Request rate is {{ $value | humanize }} req/s on {{ $labels.job }}"
